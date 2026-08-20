@@ -2,8 +2,7 @@
 
 A stochastic population dynamics study applying **branching process theory** and **Monte Carlo simulation** to model the survival and extinction of antibiotic-resistant superbug populations across discrete generations.
 
-Built as part of the MSc Data Science programme at Liverpool John Moores University (Module 7022DATSCI — Statistics and Statistical Computing).
-
+Built as part of the MSc Data Science programme at Liverpool John Moores University.
 **Authors:** Amiola Onabanjo & Imariabe Enobakhare
 
 ---
