@@ -1,0 +1,663 @@
+---
+title: "Rise of the Superbugs"
+author: "Amiola Onabanjo & Imariabe Enobakhare"
+date: "2026-04-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(123)
+```
+
+## Introduction
+
+Antibiotic resistance is one of the most pressing public health challenges of the modern era. Understanding how resistant bacterial populations superbugs grow, persist, or die out is essential for designing effective treatment strategies. This report applies branching process theory and Monte Carlo simulation to model the stochastic dynamics of superbug populations across discrete generations.
+
+A branching process models population growth by assuming each individual independently produces a random number of offspring according to a fixed probability distribution. The key parameter governing long-term population fate is the expected number of offspring per individual, denoted $m$. When $m > 1$ (supercritical), the population has a positive probability of surviving indefinitely; when $m \leq 1$ (subcritical or critical), extinction is certain in the long run. Despite this theoretical clarity, individual population trajectories are inherently random, and even supercritical populations can go extinct by chance particularly when starting from a small number of individuals.
+
+The offspring distribution used throughout this report is derived from the last four digits of a student ID: DNA = c(7, 6, 9, 9), normalised to give probabilities $p_0 = 0.226$, $p_1 = 0.194$, $p_2 = 0.290$, $p_3 = 0.290$, and an expected offspring of $m = 1.645$. This places the original superbug firmly in the supercritical regime. A second superbug is constructed from the partner's student ID digits (DNA = c(7, 1, 1, 3)), yielding $m = 1.0$ the critical threshold allowing a direct comparison of survival outcomes under different reproductive regimes.
+
+The analysis proceeds in several stages. First, the offspring distribution and simulation framework are established. Monte Carlo simulation is then applied across 1,000 independent population trajectories to estimate extinction probabilities, extinction times, and population size distributions. The effect of initial population size $Z_0$ is explored across supercritical, critical, and subcritical DNA sequences. A method for estimating $m$ from observed population data is introduced and evaluated across varying simulation lengths. Finally, confidence intervals and relative errors quantify the precision of all Monte Carlo estimates, and five DNA sequences are compared to illustrate the broader implications of branching process theory for antibiotic resistance.
+
+## Offspring Distribution
+
+We calculate the offspring probabilities and expected value $m$ for the original DNA sequence.
+
+```{r offspring-probs}
+DNA <- c(7, 6, 9, 9)
+P <- DNA / sum(DNA)
+names(P) <- c("p0", "p1", "p2", "p3")
+P
+```
+
+```{r expected-offspring}
+m <- P[2] + 2*P[3] + 3*P[4]
+cat("Expected offspring m =", m, "\n")
+```
+
+The expected offspring is $m = 1.645$, which is greater than 1, placing the population in the supercritical regime with a positive probability of long-term survival.
+
+## Simulation Function
+
+We define a function to simulate population growth over $N$ generations, starting from $Z_0$ individuals.
+
+```{r sim-function}
+simulate_population <- function(Z0, N, P){
+  Z <- numeric(N + 1)
+  Z[1] <- Z0
+
+  for (n in 1:N){
+    if (is.na(Z[n]) || Z[n] == 0){
+      Z[(n+1):(N+1)] <- 0
+      break
+    }
+
+    if (Z[n] > 10000){
+      Z[(n+1):(N+1)] <- Z[n]
+      break
+    }
+
+    offspring <- sample(0:3, size = Z[n], replace = TRUE, prob = P)
+    Z[n + 1] <- sum(offspring)
+  }
+  return(Z)
+}
+```
+
+This function tracks population size generation by generation, stopping if the population goes extinct or exceeds 10,000 individuals.
+
+## Example Trajectories
+
+We run five independent simulations to visualize the stochastic nature of the branching process.
+
+```{r sample-runs}
+N <- 10
+n_lines <- 5
+all_runs <- matrix(NA, nrow = n_lines, ncol = N + 1)
+
+for (i in 1:n_lines) {
+  all_runs[i, ] <- simulate_population(Z0 = 1, N = N, P = P)
+}
+```
+
+```{r plot-sample-runs}
+plot(0:N, all_runs[1, ], type = "n",
+     xlab = "Generation", ylab = "Population",
+     main = "Multiple Population Simulations (Z0 = 1)",
+     ylim = c(0, max(all_runs, na.rm = TRUE) * 1.1))
+
+for (i in 1:n_lines) {
+  went_extinct <- any(all_runs[i, ] == 0, na.rm = TRUE)
+  col_choice <- ifelse(went_extinct, "red", "steelblue")
+  lines(0:N, all_runs[i, ], type = "b", col = col_choice, cex = 0.5)
+}
+
+legend("topleft",
+       legend = c("Survived", "Extinct"),
+       col = c("steelblue", "red"),
+       lwd = 2, pch = 1)
+```
+
+Five independent simulations are shown above. Blue lines represent populations that survived to generation 10, while red lines represent populations that went extinct. The plot illustrates the stochastic nature of the branching process.
+Despite the identical starting conditions and offspring distribution, outcomes vary considerably across runs. 
+Surviving populations show explosive growth consistent with m = 1.645 > 1, while extinct populations die out within the first few generations.
+
+## Monte Carlo Simulation
+
+We now run 1,000 independent simulations to estimate extinction probability and population statistics.
+
+```{r monte-carlo-sims}
+n_sims <- 1000
+extinction_times <- rep(NA, n_sims)
+max_populations <- numeric(n_sims)
+final_populations <- numeric(n_sims)
+
+for (i in 1:n_sims){
+  Z <- simulate_population(Z0 = 1, N = 100, P = P)
+  ext_gen <- which(Z == 0)[1]
+  extinction_times[i] <- ifelse(is.na(ext_gen), NA, ext_gen - 1)
+  max_populations[i] <- max(Z)
+  final_populations[i] <- Z[length(Z)]
+}
+```
+
+```{r extinction-prob}
+ext_prob <- mean(!is.na(extinction_times))
+cat("Extinction probability:", round(ext_prob, 4), "\n")
+cat("Survived:", sum(is.na(extinction_times)), "out of", n_sims, "\n")
+```
+
+The Monte Carlo simulation was run for 1,000 independent populations, each starting with a single superbug (Z0 = 1) over 100 generations. The extinction probability was 0.329, meaning 329 populations went extinct while 671 survived.
+
+
+## Distribution of Extinction Times
+
+We examine when populations that went extinct actually died out.
+
+```{r extinction-time-hist}
+par(mfrow = c(1, 2))
+
+extinct <- extinction_times[!is.na(extinction_times)]
+hist(extinct,
+     breaks = seq(min(extinct) - 0.5, max(extinct) + 0.5, by = 1),
+     xlab = "Generation", ylab = "Frequency",
+     main = "Extinction Times", col = "steelblue")
+
+hist(final_populations, breaks = 30,
+     xlab = "Final Population", ylab = "Frequency",
+     main = "Final Population", col = "green")
+
+par(mfrow = c(1, 1))
+```
+
+The extinction times histogram shows that populations that went extinct did so very early, almost always within the first 2 generations. The final population histogram shows the distribution of population sizes at generation 100 the tall bar at 10,000 represents surviving populations that hit the computational cap, while the smaller bars near zero represent populations that went extinct.
+
+
+## Separated Survivor and Extinct Populations
+
+We separate the two groups for a clearer view.
+
+```{r separated-plots}
+survived_index <- is.na(extinction_times)
+extinct_index <- !is.na(extinction_times)
+
+par(mfrow = c(1, 2))
+
+final_survived_nonzero <- final_populations[survived_index & final_populations > 0]
+hist(final_survived_nonzero, breaks = 20,
+     xlab = "Final Population", ylab = "Frequency",
+     main = "Final Population - Survived", col = "steelblue")
+
+late_extinct <- extinct_index & extinction_times > 1
+hist(max_populations[late_extinct],
+     breaks = seq(min(max_populations[late_extinct]) - 0.5,
+                  max(max_populations[late_extinct]) + 0.5, by = 1),
+     xlab = "Maximum Population", ylab = "Frequency",
+     main = "Max Population (Extinct After Gen 1)", col = "coral")
+
+par(mfrow = c(1, 1))
+```
+
+Surviving populations all reached the computational cap of 10,000 bugs, as shown in the final population histogram. For populations that went extinct after the first generation, the maximum population histogram shows how large the colony got before dying out most never grew beyond a handful of bugs before collapsing entirely. 
+
+
+## Effect of Initial Population Size
+
+The effect of initial population size on extinction probability is now investigated by running 1,000 simulations for five different starting values of Z0 using the original superbug DNA (7699
+
+```{r vary-z0}
+Z0_values <- c(1, 5, 10, 20, 50)
+ext_prob_Z0 <- numeric(length(Z0_values))
+
+for (j in seq_along(Z0_values)) {
+  ext_temp <- rep(NA, n_sims)
+  for (i in 1:n_sims) {
+    Z <- simulate_population(Z0 = Z0_values[j], N = 100, P = P)
+    ext_gen <- which(Z == 0)[1]
+    ext_temp[i] <- ifelse(is.na(ext_gen), NA, ext_gen - 1)
+  }
+  ext_prob_Z0[j] <- mean(!is.na(ext_temp))
+  cat("Z0 =", Z0_values[j], "| Extinction probability:",
+      round(ext_prob_Z0[j], 4), "\n")
+}
+```
+
+```{r plot-z0-effect}
+plot(Z0_values, ext_prob_Z0, type = "b",
+     xlab = "Initial Population Size (Z0)",
+     ylab = "Extinction Probability",
+     main = "Effect of Initial Population on Extinction (DNA: 7699)",
+     col = "steelblue", pch = 16, ylim = c(0, 1))
+abline(h = 0, col = "red", lwd = 1, lty = 2)
+```
+
+The plot shows that extinction probability drops sharply as the initial population size Z0 increases. With Z0 = 1, the extinction probability is 0.342, but this falls to near zero by Z0 = 10. This demonstrates that extinction probability is not solely determined by the expected offspring m; the initial population size plays an equally important role. A larger starting population provides a buffer against the random chance of early extinction, even when the offspring distribution remains unchanged.
+
+## Comparison Across DNA Types
+
+The same Z0 investigation is extended to compare the subcritical (8111) and critical (7113) superbugs against the original supercritical case, showing how initial population size interacts differently with each offspring regime.
+
+```{r compare-dna-types}
+P_sub <- c(8,1,1,1) / sum(c(8,1,1,1))
+P_crit <- c(7,1,1,3) / sum(c(7,1,1,3))
+
+ext_sub <- numeric(length(Z0_values))
+ext_crit <- numeric(length(Z0_values))
+
+for (j in seq_along(Z0_values)) {
+  temp_sub <- rep(NA, n_sims)
+  temp_crit <- rep(NA, n_sims)
+
+  for (i in 1:n_sims) {
+    Z_sub <- simulate_population(Z0 = Z0_values[j], N = 100, P = P_sub)
+    Z_crit <- simulate_population(Z0 = Z0_values[j], N = 100, P = P_crit)
+    temp_sub[i] <- ifelse(is.na(which(Z_sub == 0)[1]), NA, 1)
+    temp_crit[i] <- ifelse(is.na(which(Z_crit == 0)[1]), NA, 1)
+  }
+
+  ext_sub[j] <- mean(!is.na(temp_sub))
+  ext_crit[j] <- mean(!is.na(temp_crit))
+}
+```
+
+```{r plot-dna-comparison}
+plot(Z0_values, ext_prob_Z0, type = "b",
+     xlab = "Initial Population Size (Z0)",
+     ylab = "Extinction Probability",
+     main = "Extinction Probability vs Z0 by DNA Type",
+     col = "steelblue", pch = 16, ylim = c(0, 1))
+lines(Z0_values, ext_sub, type = "b", col = "red", pch = 16)
+lines(Z0_values, ext_crit, type = "b", col = "orange", pch = 16)
+legend(x = 18, y = 0.45,
+       legend = c("Supercritical (7699)", "Subcritical (8111)", "Critical (7113)"),
+       col = c("steelblue", "red", "orange"),
+       lwd = 2, pch = 16, cex = 0.7)
+```
+
+For the subcritical case ($m < 1$), extinction remains near certain regardless of $Z_0$. For the critical case ($m = 1$), extinction probability declines gradually but remains high. The supercritical case shows rapid decline in extinction risk with increasing $Z_0$.
+The comparison plot reveals how initial population size interacts with the offspring distribution. For the supercritical bug (7699, m = 1.645), extinction probability falls rapidly to near zero as Z0 increases beyond 5. A larger starting population quickly eliminates the risk of early random extinction.
+
+For the subcritical bug (8111, m = 0.546), extinction remains near certain regardless of Z0. Even starting with 50 bugs cannot overcome the fundamental tendency toward extinction when m < 1. The offspring distribution simply cannot sustain the population long term.
+
+The critical case (7113, m = 1.0) shows a gradual but meaningful decline as Z0 increases, with extinction probability dropping from near 1.0 at Z0 = 1 to approximately 0.57 at Z0 = 50. This highlights that at the critical threshold, initial population size has a real but limited effect. The population is still more likely to go extinct than survive even with 50 starting individuals.
+
+These results demonstrate that extinction probability depends on both the expected offspring m and the initial population size Z0. A finding that goes beyond the simple m < 1 versus m > 1 classification.
+
+## Critical Threshold Comparison
+
+A second superbug is constructed using team mate student ID digits (DNA: 7113), giving an expected offspring of m = 1.0. This critical case is compared directly against the original superbug to illustrate the dramatic effect of the m = 1 threshold.
+
+```{r weak-superbug-setup}
+DNA_weak <- c(7, 1, 1, 3)
+P_weak <- DNA_weak / sum(DNA_weak)
+m_weak <- P_weak[2] + 2*P_weak[3] + 3*P_weak[4]
+cat("Expected offspring (weak):", round(m_weak, 4), "\n")
+cat("Expected offspring (original):", round(m, 4), "\n")
+```
+
+```{r weak-superbug-sim}
+extinction_times_weak <- rep(NA, n_sims)
+max_populations_weak <- numeric(n_sims)
+final_populations_weak <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  Z <- simulate_population(Z0 = 1, N = 100, P = P_weak)
+  ext_gen <- which(Z == 0)[1]
+  extinction_times_weak[i] <- ifelse(is.na(ext_gen), NA, ext_gen - 1)
+  max_populations_weak[i] <- max(Z)
+  final_populations_weak[i] <- Z[length(Z)]
+}
+
+ext_prob_weak <- mean(!is.na(extinction_times_weak))
+cat("Extinction probability (weak):", round(ext_prob_weak, 4), "\n")
+cat("Survived:", sum(is.na(extinction_times_weak)), "out of", n_sims, "\n")
+```
+
+```{r weak-superbug-plots}
+extinct_weak <- extinction_times_weak[!is.na(extinction_times_weak)]
+
+if (length(extinct_weak) > 0){
+  hist(extinct_weak,
+       breaks = seq(min(extinct_weak) - 0.5, max(extinct_weak) + 0.5, by = 1),
+       xlab = "Generation", ylab = "Frequency",
+       main = "Extinction Times - Weak Superbug", col = "steelblue")
+}
+
+barplot(c(ext_prob, ext_prob_weak),
+        names.arg = c("Original (7699)", "Weak (7113)"),
+        col = c("coral", "steelblue"),
+        ylab = "Extinction Probability",
+        main = "Extinction Probability Comparison",
+        ylim = c(0,1))
+```
+
+A second superbug was engineered using DNA sequence 7113, giving an expected offspring of m = 1 the critical threshold. In contrast to the original superbug (m = 1.645), this superbug went extinct in 989 out of 1,000 simulations, an extinction probability of 98.9%.
+
+The extinction times histogram shows a heavily right skewed distribution, with most populations dying out within the first 5 generations. However, a small number of bug colonies survived beyond generation 5, reflecting the randomness in the branching process.
+
+The comparison bar chart clearly illustrates the dramatic effect of expected offspring on population survival. A seemingly small difference in m from 1.0 to 1.645 is the difference between near certain extinction and roughly a 1 in 3 chance of survival.
+
+
+## Estimating Expected Offspring
+
+The expected offspring m is estimated from simulated population data using the ratio of total offspring to total parents. Only surviving populations are used, as extinct trajectories provide insufficient reproductive data. A DNA sequence with m = 1.8 is used to ensure a high survival rate and accurate estimation.
+
+```{r estimator-function}
+simulate_population_nocap <- function(Z0, N, P) {
+  Z <- numeric(N + 1)
+  Z[1] <- Z0
+  for (n in 1:N) {
+    if (is.na(Z[n]) || Z[n] == 0) {
+      Z[(n+1):(N+1)] <- 0
+      break
+    }
+    offspring <- sample(0:3, size = Z[n], replace = TRUE, prob = P)
+    Z[n + 1] <- sum(offspring)
+  }
+  return(Z)
+}
+```
+
+```{r estimate-m}
+DNA_slow <- c(1, 3, 3, 3)
+P_slow <- DNA_slow / sum(DNA_slow)
+m_slow <- P_slow[2] + 2*P_slow[3] + 3*P_slow[4]
+cat("Expected offspring (slow):", round(m_slow, 4), "\n")
+
+m_hat_values <- numeric(n_sims)
+
+for (i in 1:n_sims) {
+  Z <- simulate_population_nocap(Z0 = 1, N = 30, P = P_slow)
+  if (any(Z == 0)) { m_hat_values[i] <- NA; next }
+  total_parents <- sum(Z[1:(length(Z)-1)])
+  if (total_parents > 0) {
+    m_hat_values[i] <- sum(Z[2:length(Z)]) / total_parents
+  } else {
+    m_hat_values[i] <- NA
+  }
+}
+
+m_hat_clean <- m_hat_values[!is.na(m_hat_values)]
+cat("Mean m_hat:", round(mean(m_hat_clean), 4), "\n")
+cat("True m:", round(m_slow, 4), "\n")
+cat("Difference:", round(abs(mean(m_hat_clean) - m_slow), 4), "\n")
+```
+
+```{r plot-mhat}
+hist(m_hat_clean, breaks = 30,
+     xlab = "Estimated m_hat", ylab = "Frequency",
+     main = "Distribution of Expected Offspring Estimator",
+     col = "steelblue")
+abline(v = mean(m_hat_clean), col = "red", lwd = 2, lty = 2)
+abline(v = m_slow, col = "green", lwd = 2, lty = 2)
+legend("topright", legend = c("Mean m_hat", "True m"),
+       col = c("red", "green"), lwd = 2, lty = 2)
+```
+
+The expected offspring estimator m_hat was calculated as the ratio of total offspring to total parents across all generations, following the formula in the project brief. Only populations that survived all 30 generations without going extinct were included, following the recommendation that the estimator should be applied to non extinct populations only. 
+
+Across 1,000 simulations, the mean m_hat was 1.8, identical to the true value with a difference of 0. The histogram shows the distribution of m_hat estimates is tightly centered on the true m, confirming that the estimator performs excellently when applied to surviving populations with a clearly supercritical distribution.
+
+## Effect of Simulation Length on Estimator
+
+To assess how simulation length affects estimator accuracy, the m_hat estimator is evaluated across N = 10, 20 and 30 generations using a moderate-growth DNA (3, 4, 2, 1) with m = 1.1.
+
+```{r mhat-by-length}
+DNA_length <- c(3, 4, 2, 1)
+P_length <- DNA_length / sum(DNA_length)
+m_length <- P_length[2] + 2*P_length[3] + 3*P_length[4]
+cat("DNA for length comparison, m =", round(m_length, 4), "\n")
+
+N_values <- c(10, 20, 30)
+m_hat_by_N <- numeric(length(N_values))
+m_hat_sd_by_N <- numeric(length(N_values))
+
+for (j in seq_along(N_values)) {
+  m_hat_temp <- numeric(n_sims)
+  for (i in 1:n_sims) {
+    Z <- simulate_population_nocap(Z0 = 1, N = N_values[j], P = P_length)
+    if (any(Z == 0)) { m_hat_temp[i] <- NA; next }
+    total_parents <- sum(Z[1:(length(Z)-1)])
+    if (total_parents > 0) {
+      m_hat_temp[i] <- sum(Z[2:length(Z)]) / total_parents
+    } else {
+      m_hat_temp[i] <- NA
+    }
+  }
+  m_hat_clean_temp <- m_hat_temp[!is.na(m_hat_temp)]
+  m_hat_by_N[j] <- mean(m_hat_clean_temp)
+  m_hat_sd_by_N[j] <- sd(m_hat_clean_temp)
+  cat("N =", N_values[j], "| Mean m_hat:", round(m_hat_by_N[j], 4),
+      "| SD:", round(m_hat_sd_by_N[j], 4), "\n")
+}
+```
+
+```{r plot-length-effect}
+plot(N_values, m_hat_by_N, type = "b",
+     xlab = "Simulation Length (N generations)",
+     ylab = "Mean m_hat",
+     main = "m_hat Estimator Performance vs Simulation Length",
+     col = "steelblue", pch = 16,
+     ylim = c(min(m_hat_by_N) - 0.05, max(m_hat_by_N) + 0.05))
+abline(h = m_length, col = "red", lwd = 2, lty = 2)
+legend("topright", legend = c("Mean m_hat", "True m"),
+       col = c("steelblue", "red"), lwd = 2, pch = c(16, NA), lty = c(1, 2))
+```
+
+At N = 10, the estimator overestimates the true m with a mean of 1.1627 and high variability (SD = 0.099). As N increases to 20 and 30 generations, the estimate converges towards the true value of m = 1.1, with the standard deviation dropping from 0.099 at N = 10 to 0.038 at N = 30.
+
+This confirms that longer simulations produce more reliable estimates of m. The estimator performs well by N = 30, suggesting this is a sufficient simulation length for accurate estimation of the expected offspring.
+
+## Confidence Intervals
+
+95% confidence intervals was calculated for all key Monte Carlo estimates to quantify the precision of the results. A convergence plot is also produced to confirm that 1,000 simulations is sufficient for stable estimation.
+
+```{r ci-calculations}
+n <- n_sims
+p_hat <- ext_prob
+se <- sqrt(p_hat * (1 - p_hat) / n)
+ci_lower <- p_hat - 1.96 * se
+ci_upper <- p_hat + 1.96 * se
+cat("Extinction probability:", round(p_hat, 4), "\n")
+cat("95% CI: [", round(ci_lower, 4), ",", round(ci_upper, 4), "]\n")
+
+p_hat_weak <- ext_prob_weak
+se_weak <- sqrt(p_hat_weak * (1 - p_hat_weak) / n)
+ci_lower_weak <- p_hat_weak - 1.96 * se_weak
+ci_upper_weak <- p_hat_weak + 1.96 * se_weak
+cat("Weak extinction probability:", round(p_hat_weak, 4), "\n")
+cat("95% CI: [", round(ci_lower_weak, 4), ",", round(ci_upper_weak, 4), "]\n")
+
+se_mhat <- sd(m_hat_clean) / sqrt(length(m_hat_clean))
+ci_lower_mhat <- mean(m_hat_clean) - 1.96 * se_mhat
+ci_upper_mhat <- mean(m_hat_clean) + 1.96 * se_mhat
+cat("Mean m_hat:", round(mean(m_hat_clean), 4), "\n")
+cat("95% CI for m_hat: [", round(ci_lower_mhat, 4), ",", round(ci_upper_mhat, 4), "]\n")
+
+extinct_times_clean <- extinction_times[!is.na(extinction_times)]
+mean_ext_time <- mean(extinct_times_clean)
+se_ext_time <- sd(extinct_times_clean) / sqrt(length(extinct_times_clean))
+ci_lower_ext <- mean_ext_time - 1.96 * se_ext_time
+ci_upper_ext <- mean_ext_time + 1.96 * se_ext_time
+cat("Mean extinction time:", round(mean_ext_time, 4), "\n")
+cat("95% CI for extinction time: [", round(ci_lower_ext, 4), ",", round(ci_upper_ext, 4), "]\n")
+
+mean_max_pop <- mean(max_populations)
+se_max_pop <- sd(max_populations) / sqrt(n_sims)
+ci_lower_max <- mean_max_pop - 1.96 * se_max_pop
+ci_upper_max <- mean_max_pop + 1.96 * se_max_pop
+cat("Mean maximum population:", round(mean_max_pop, 2), "\n")
+cat("95% CI for max population: [", round(ci_lower_max, 2), ",", round(ci_upper_max, 2), "]\n")
+```
+
+Monte Carlo confidence intervals were calculated for all key estimates. The extinction probability of 0.329 has a 95% CI of [0.2999, 0.3581], confirming a reliable estimate with low uncertainty across 1,000 runs.
+
+For populations that did go extinct, the mean extinction time was just 1.599 generations with CI [1.4892, 1.7083], showing that extinction happens very early or not at all consistent with the all-or-nothing nature of branching processes.
+
+The mean maximum and final populations are nearly identical at approximately 8,691, both with similar confidence intervals. This reflects the fact that surviving populations hit the computational cap early and remain there for the rest of the simulation.
+
+
+## Convergence Plot
+
+We show how the extinction probability estimate stabilizes as the number of simulations increases.
+
+```{r convergence-plot}
+sim_sizes <- seq(100, 1000, by = 100)
+ext_prob_convergence <- numeric(length(sim_sizes))
+
+for (j in seq_along(sim_sizes)) {
+  ext_prob_convergence[j] <- mean(!is.na(extinction_times[1:sim_sizes[j]]))
+}
+
+plot(sim_sizes, ext_prob_convergence, type = "b",
+     xlab = "Number of Simulations",
+     ylab = "Estimated Extinction Probability",
+     main = "Convergence of Extinction Probability Estimate",
+     col = "steelblue", pch = 16)
+abline(h = ext_prob, col = "red", lwd = 2, lty = 2)
+legend("topright", legend = c("Estimate", "Final value"),
+       col = c("steelblue", "red"), lwd = 2, lty = c(1, 2), pch = c(16, NA))
+```
+
+The convergence plot shows the estimated extinction probability stabilising around 0.329 as the number of simulations increases, confirming that 1,000 simulations is sufficient for reliable Monte Carlo estimation.
+
+## Relative Errors
+
+We calculate relative errors for all Monte Carlo estimates.
+
+```{r relative-errors}
+ci_width_ext <- ci_upper - ci_lower
+rel_error_ext <- (ci_width_ext / ext_prob) * 100
+
+ci_width_weak <- ci_upper_weak - ci_lower_weak
+rel_error_weak <- (ci_width_weak / ext_prob_weak) * 100
+
+ci_width_mhat <- ci_upper_mhat - ci_lower_mhat
+rel_error_mhat <- (ci_width_mhat / mean(m_hat_clean)) * 100
+
+ci_width_ext_time <- ci_upper_ext - ci_lower_ext
+rel_error_ext_time <- (ci_width_ext_time / mean_ext_time) * 100
+
+ci_width_max <- ci_upper_max - ci_lower_max
+rel_error_max <- (ci_width_max / mean_max_pop) * 100
+
+rel_error_table <- data.frame(
+  Quantity = c("Extinction Probability (original)", "Extinction Probability (weak)",
+               "Mean m_hat", "Mean Extinction Time", "Mean Max Population"),
+  Estimate = round(c(ext_prob, ext_prob_weak, mean(m_hat_clean),
+                     mean_ext_time, mean_max_pop), 4),
+  CI_Width = round(c(ci_width_ext, ci_width_weak, ci_width_mhat,
+                     ci_width_ext_time, ci_width_max), 4),
+  Relative_Error_Pct = round(c(rel_error_ext, rel_error_weak, rel_error_mhat,
+                                rel_error_ext_time, rel_error_max), 2)
+)
+
+knitr::kable(rel_error_table,
+             caption = "Relative errors for Monte Carlo estimates",
+             col.names = c("Quantity", "Estimate", "CI Width", "Relative Error (%)"))
+
+target_rel_error <- 0.05
+n_needed <- ceiling((1.96 / target_rel_error)^2 * ext_prob * (1 - ext_prob) / ext_prob^2)
+cat("Simulations needed for 5% relative error:", n_needed, "\n")
+```
+The relative error table shows that estimates vary considerably in precision. The mean m_hat and weak superbug extinction probability are estimated very precisely (relative errors below 2%), while the original extinction probability has the highest relative error of 17.70% reflecting the greater variability when extinction probability is moderate.
+
+To achieve a 5% relative error on the extinction probability estimate, approximately 3,134 simulations would be required. The current study uses 1,000 simulations, giving a relative error of 17.70%. This is an acceptable trade-off between computational cost and precision for exploratory analysis, though increasing to 3,000 simulations would substantially improve the accuracy of the extinction probability estimate.
+
+
+## Five DNA Sequence Comparison
+
+Five DNA sequences spanning subcritical, critical and supercritical regimes are simulated to compare extinction probabilities and expected offspring values across a broader range of offspring distributions.
+
+```{r five-dna-comparison}
+dna_list <- list(
+  "Original (7699)" = c(7, 6, 9, 9),
+  "Critical-Teammate (7113)" = c(7, 1, 1, 3),
+  "Subcritical (8111)" = c(8, 1, 1, 1),
+  "Subcritical (6210)" = c(6, 2, 1, 0),
+  "Supercritical (1239)" = c(1, 2, 3, 9)
+)
+
+results <- data.frame(DNA = names(dna_list), m = NA, ext_prob = NA)
+
+for (k in seq_along(dna_list)) {
+  dna <- dna_list[[k]]
+  p_temp <- dna / sum(dna)
+  m_temp <- p_temp[2] + 2*p_temp[3] + 3*p_temp[4]
+
+  ext_temp <- rep(NA, n_sims)
+  for (i in 1:n_sims) {
+    Z <- simulate_population(Z0 = 1, N = 100, P = p_temp)
+    ext_gen <- which(Z == 0)[1]
+    ext_temp[i] <- ifelse(is.na(ext_gen), NA, ext_gen - 1)
+  }
+
+  results$m[k] <- round(m_temp, 4)
+  results$ext_prob[k] <- round(mean(!is.na(ext_temp)), 4)
+}
+
+print(results)
+```
+
+```{r plot-five-dna}
+barplot(results$ext_prob, names.arg = results$DNA,
+        col = "steelblue", ylab = "Extinction Probability",
+        main = "Extinction Probability by DNA Sequence",
+        ylim = c(0,1), las = 2, cex.names = 0.7)
+abline(h = 0.5, col = "red", lwd = 2, lty = 2)
+
+barplot(results$m, names.arg = results$DNA,
+        col = "coral", ylab = "Expected Offspring (m)",
+        main = "Expected Offspring by DNA Sequence",
+        las = 2, cex.names = 0.7)
+abline(h = 1, col = "red", lwd = 2, lty = 2)
+```
+
+Five DNA sequences were simulated to investigate how expected offspring m influences population survival. The results confirm branching process theory sequences with m < 1 (subcritical) always went extinct across all 1,000 simulations, while sequences with m > 1 (supercritical) showed dramatically lower extinction rates.
+
+The supercritical superbug (DNA: 1239, m = 2.333) had the lowest extinction probability of just 7.4%, making it the most dominant organism tested. In contrast, the original superbug (DNA: 7699, m = 1.645) showed a moderate extinction probability of 33.1%, reflecting strong but not overwhelming reproductive fitness.
+
+These results demonstrate that the critical threshold m = 1 is a key determinant of population survival, consistent with the mathematical theory of branching processes.
+
+## Summary Table
+
+A summary table consolidates the offspring probabilities, expected offspring m and extinction probability for all five DNA sequences investigated in this report.
+
+```{r summary-table}
+summary_table <- data.frame(
+  DNA_Code = c("7699", "7113", "8111", "6210", "1239"),
+  Classification = c("Supercritical", "Critical", "Subcritical", "Subcritical", "Supercritical"),
+  p0 = c(0.2258, 0.5833, 0.7273, 0.6667, 0.0667),
+  p1 = c(0.1935, 0.0833, 0.0909, 0.2222, 0.1333),
+  p2 = c(0.2903, 0.0833, 0.0909, 0.1111, 0.2000),
+  p3 = c(0.2903, 0.2500, 0.0909, 0.0000, 0.6000),
+  m = c(1.6452, 1.0000, 0.5455, 0.4444, 2.3333),
+  Extinction_Prob = c(0.331, 0.990, 1.000, 1.000, 0.074)
+)
+
+knitr::kable(summary_table,
+             caption = "Summary of Monte Carlo results across five DNA sequences",
+             col.names = c("DNA Code", "Classification", "p0", "p1", "p2", "p3", "m", "Extinction Probability"),
+             align = "c")
+```
+
+The summary table brings together all key results across the five DNA sequences investigated. It clearly shows the relationship between the offspring distribution and extinction behaviour. Sequences with m < 1 (subcritical) always went extinct, sequences with m = 1 (critical) went extinct in almost all runs, and sequences with m > 1 (supercritical) showed meaningful survival rates. The expected offspring m is therefore the central determinant of whether a superbug population survives or dies out a result consistent with the mathematical theory of branching processes.
+
+## Conclusion
+
+This study has demonstrated how Monte Carlo simulation can be applied to branching process models to investigate the survival dynamics of antibiotic-resistant superbug populations. Across 1,000 independent simulations of the original superbug (DNA: 7699, $m = 1.645$), the estimated extinction probability was 0.329, with a 95% confidence interval of [0.2999, 0.3581]. Despite a clearly supercritical expected offspring rate, nearly a third of populations died out almost always within the first two generations illustrating the decisive role of stochastic variation in early stage population dynamics.
+
+The investigation of initial population size $Z_0$ revealed that extinction probability is not solely determined by $m$. Larger starting populations dramatically reduce the risk of early extinction even when the offspring distribution is unchanged, with the extinction probability falling from 0.342 at $Z_0 = 1$ to effectively zero by $Z_0 = 10$. This finding has a direct practical implication for antibiotic resistance: a single surviving bacterium after treatment is far more vulnerable to chance extinction than even a small colony of ten individuals.
+
+Comparison of the original superbug ($m = 1.645$) against the critical case ($m = 1.0$, DNA: 7113) showed a stark contrast extinction probability rose from approximately 32.9% to 98.9% as $m$ decreased from 1.645 to 1.0. The threshold $m = 1$ is therefore a critical boundary, consistent with classical branching process theory, but the simulations make clear that the magnitude of $m$ above this threshold matters considerably for practical survival prospects.
+
+The expected offspring estimator $\hat{m}$ performed excellently when applied to surviving populations, recovering the true value of $m = 1.8$ with zero rounding error (DNA: 1, 3, 3, 3). Estimator accuracy improved markedly with simulation length, with standard deviation falling from 0.099 at $N = 10$ to 0.038 at $N = 30$ generations, confirming that longer simulations produce more reliable parameter estimates.
+
+The relative error analysis showed that 1,000 simulations is adequate for exploratory analysis, though approximately 3,134 simulations would be required to achieve a 5% relative error on the extinction probability estimate. Together, these results confirm that Monte Carlo simulation is a powerful, flexible, and interpretable tool for modelling stochastic population processes one that complements and validates the analytical predictions of branching process theory.
+
+## AI Disclosure
+
+Generative AI tools were used in the preparation of this report in accordance with the module guidelines. The following tools were used:
+
+**Claude (Anthropic)** was used throughout the project to assist with:
+- Debugging R code, including fixing errors in the simulation function, Monte Carlo loop and histogram breaks
+- Suggesting improvements to plot formatting and visualisation
+- Drafting and refining commentary text explaining results
+- Reviewing the R Markdown structure and formatting
+
+**ChatGPT (OpenAI)** was used to:
+- Review the overall structure of the R Markdown report
+- Suggest code refactoring approaches
+
+All code was typed, understood and verified by I and my team mate. All interpretations and conclusions are our own. AI-generated suggestions were critically evaluated before inclusion and modified where necessary to reflect our own understanding of the results.
+
+The following prompts were used with Claude:
+- Fix the error in my simulate_population function
+- How do I separate extinct and surviving populations in R
+- Write commentary explaining what the extinction times histogram shows
+- Review my Rmd and flag any issues with the commentary numbers
+
+The following prompts were used with ChatGPT:
+- Review my R Markdown report structure and suggest improvements
+- Refactor my Monte Carlo code into reusable functions
